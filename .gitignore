@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment / secrets — never commit keys
+.env
+.env.*
+
+# Editor and OS noise
+.DS_Store
+.vscode/
+.idea/
+
+# Test and tool caches
+coverage/
+*.tsbuildinfo
+.eslintcache
