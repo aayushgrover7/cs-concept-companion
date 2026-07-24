@@ -51,7 +51,9 @@ export class WikipediaProvider implements ExplanationProvider {
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
     // Try the exact title first (fast; Wikipedia redirects casing), then search.
-    const differsFromLocal = Boolean(localName && localName.toLowerCase() !== selected.toLowerCase());
+    const differsFromLocal = Boolean(
+      localName && localName.toLowerCase() !== selected.toLowerCase(),
+    );
     const candidates: Candidate[] = [{ kind: 'title', value: selected || localName! }];
     if (differsFromLocal) candidates.push({ kind: 'title', value: localName! });
     candidates.push({ kind: 'search', value: selected || localName! });
@@ -98,9 +100,7 @@ export class WikipediaProvider implements ExplanationProvider {
     const response = await fetch(url, { headers: { Accept: 'application/json' }, signal });
     if (response.status === 404) return null;
     if (!response.ok) {
-      throw new ExplanationError(
-        `Wikipedia returned an error (HTTP ${response.status}). Try again.`,
-      );
+      throw new ExplanationError(`Wikipedia returned an error (HTTP ${response.status}). Try again.`);
     }
     return (await response.json()) as WikiSummary;
   }
@@ -142,7 +142,7 @@ export class WikipediaProvider implements ExplanationProvider {
     const exact = pool.find((title) => title.toLowerCase() === wanted);
     if (exact) return exact;
 
-    // A title whose base (before any "(disambiguation-style)" qualifier) matches.
+    // A title whose base (before any "(qualifier)") matches the query.
     const baseMatch = pool.find((title) => title.split(' (')[0]?.toLowerCase() === wanted);
     if (baseMatch) return baseMatch;
 
@@ -162,12 +162,15 @@ export class WikipediaProvider implements ExplanationProvider {
 
   private build(summary: WikiSummary, local?: ConceptEntry): ConceptExplanation {
     const extract = (summary.extract ?? '').trim();
-    const short = this.firstSentences(extract, 2, 320);
+    const sentences = this.splitSentences(extract);
+    const short = this.take(sentences, 2, 320) || truncate(extract, 320);
+    // The expanded view shows what the concise view left off, so nothing repeats.
+    const remainder = extract.startsWith(short) ? extract.slice(short.length).trim() : extract;
 
     return {
       concept: summary.title ?? 'Concept',
       shortExplanation: short,
-      detailedExplanation: extract.length > short.length ? extract : '',
+      detailedExplanation: remainder && remainder !== short ? remainder : '',
       example: local?.example ?? '',
       analogy: local?.analogy ?? '',
       whyItMatters: local?.whyItMatters ?? '',
@@ -177,23 +180,42 @@ export class WikipediaProvider implements ExplanationProvider {
     };
   }
 
-  /** Keep only the first couple of sentences for the concise view. */
-  private firstSentences(text: string, count: number, max: number): string {
-    const sentences = text.match(/[^.!?]+[.!?]+(?:\s|$)/g);
-    if (!sentences) return truncate(text, max);
+  /**
+   * Split prose into sentences without breaking on common abbreviations
+   * ("e.g.", "i.e.", "etc.") — the naive "split on every period" approach
+   * produced fragments like "g. in the form of decisions."
+   */
+  private splitSentences(text: string): string[] {
+    const dot = String.fromCharCode(0); // sentinel standing in for an abbreviation's period
+    const abbreviations = /\b(e\.g|i\.e|etc|vs|cf|al|Inc|Ltd|Dr|Mr|Mrs|Ms|St|approx|Fig|No)\./gi;
+    const guarded = text.replace(abbreviations, (match) => match.split('.').join(dot));
+    return guarded
+      .split(/(?<=[.!?])\s+(?=[A-Z"“'(])/)
+      .map((sentence) => sentence.split(dot).join('.').trim())
+      .filter(Boolean);
+  }
+
+  /** Join sentences up to a count and character budget. */
+  private take(sentences: string[], count: number, max: number): string {
     let out = '';
     let used = 0;
     for (const sentence of sentences) {
-      if (out && out.length + sentence.length > max) break;
-      out += sentence;
+      if (out && out.length + sentence.length + 1 > max) break;
+      out += (out ? ' ' : '') + sentence;
       if (++used >= count) break;
     }
-    return out.trim() || truncate(text, max);
+    return out.trim();
   }
 
-  /** Reduce a long or messy selection to a short lookup phrase. */
+  /** Reduce a selection to a clean lookup phrase, stripping stray punctuation. */
   private conciseQuery(raw: string): string {
-    const cleaned = sanitizeSelection(raw);
+    const cleaned = sanitizeSelection(raw)
+      // Drop leading/trailing punctuation an accidental highlight may include,
+      // but keep trailing "+"/"#" so "C++" and "C#" survive.
+      .replace(/^[^\p{L}\p{N}]+/u, '')
+      .replace(/[^\p{L}\p{N}+#]+$/u, '')
+      .trim();
+    if (!cleaned) return '';
     const words = cleaned.split(' ');
     return words.length <= 6 ? cleaned : words.slice(0, 6).join(' ');
   }
