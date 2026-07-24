@@ -46,19 +46,13 @@ export class WikipediaProvider implements ExplanationProvider {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
-    // A curated match gives us the canonical CS title directly. Otherwise bias
-    // the lookup toward computer science so ambiguous terms (e.g. "semaphore")
-    // resolve to their CS sense rather than the everyday one.
-    const candidates: Candidate[] = local
-      ? [
-          { kind: 'title', value: local.entry.name },
-          { kind: 'search', value: local.entry.name },
-        ]
-      : [
-          { kind: 'search', value: `${query} computer science` },
-          { kind: 'title', value: query },
-          { kind: 'search', value: query },
-        ];
+    // Try the exact title first (fast, correct for well-formed terms like
+    // "Recursion"), then fall back to full-text search, which handles casing
+    // and redirects. A curated match supplies the canonical CS title.
+    const candidates: Candidate[] = [
+      { kind: 'title', value: local?.entry.name ?? query },
+      { kind: 'search', value: local?.entry.name ?? query },
+    ];
 
     try {
       const summary = await this.resolve(candidates, combined);
@@ -109,7 +103,7 @@ export class WikipediaProvider implements ExplanationProvider {
       action: 'query',
       list: 'search',
       srsearch: query,
-      srlimit: '1',
+      srlimit: '6',
       srnamespace: '0',
       format: 'json',
       origin: '*',
@@ -119,7 +113,34 @@ export class WikipediaProvider implements ExplanationProvider {
     const data = (await response.json()) as {
       query?: { search?: Array<{ title?: string }> };
     };
-    return data.query?.search?.[0]?.title ?? null;
+    const titles = (data.query?.search ?? [])
+      .map((hit) => hit.title)
+      .filter((title): title is string => Boolean(title));
+    return this.chooseTitle(titles, query);
+  }
+
+  /**
+   * Pick the best article from search hits: skip broad meta-pages (glossaries,
+   * lists, outlines) and prefer the title that most closely matches the query.
+   */
+  private chooseTitle(titles: string[], query: string): string | null {
+    if (titles.length === 0) return null;
+    const wanted = query.trim().toLowerCase();
+    const isMeta = (title: string): boolean =>
+      /^(glossary|list|index|outline|comparison|timeline|history|portal)\b/i.test(title);
+
+    const specific = titles.filter((title) => !isMeta(title));
+    const pool = specific.length > 0 ? specific : titles;
+
+    const exact = pool.find((title) => title.toLowerCase() === wanted);
+    if (exact) return exact;
+
+    // A title whose base (before any "(disambiguation-style)" qualifier) matches.
+    const baseMatch = pool.find((title) => title.split(' (')[0]?.toLowerCase() === wanted);
+    if (baseMatch) return baseMatch;
+
+    const startsWith = pool.find((title) => title.toLowerCase().startsWith(wanted));
+    return startsWith ?? pool[0] ?? null;
   }
 
   private build(summary: WikiSummary, local?: ConceptEntry): ConceptExplanation {

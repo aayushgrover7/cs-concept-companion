@@ -1,1 +1,0 @@
-import{j as e}from"./useSettings-CMR8X-BJ.js";function c({checked:a,onChange:s,label:t}){return e.jsxs("label",{className:"toggle",children:[e.jsx("input",{type:"checkbox",role:"switch",checked:a,"aria-label":t,onChange:l=>s(l.target.checked)}),e.jsx("span",{className:"toggle-track","aria-hidden":"true",children:e.jsx("span",{className:"toggle-thumb"})})]})}export{c as T};
