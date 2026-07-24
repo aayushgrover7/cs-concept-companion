@@ -7,6 +7,7 @@ import { sanitizeSelection, truncate } from '../utils/text';
 const REQUEST_TIMEOUT_MS = 15_000;
 const REST_SUMMARY = 'https://en.wikipedia.org/api/rest_v1/page/summary/';
 const ACTION_API = 'https://en.wikipedia.org/w/api.php';
+const MAX_TITLES_PER_SEARCH = 4;
 
 /** Shape of the fields we read from Wikipedia's REST summary endpoint. */
 interface WikiSummary {
@@ -40,7 +41,7 @@ export class WikipediaProvider implements ExplanationProvider {
     const local = matchConcept(input.selectedText, context);
     // The user's own selection drives the lookup — a dictionary alias must not
     // hijack it (e.g. "Deep Learning" is an alias of Machine Learning, but has
-    // its own Wikipedia article). The curated name is only a fallback.
+    // its own Wikipedia article). The curated name is only a last-resort fallback.
     const selected = this.conciseQuery(input.selectedText);
     const localName = local?.entry.name;
     if (!selected && !localName) {
@@ -50,10 +51,8 @@ export class WikipediaProvider implements ExplanationProvider {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
-    // Resolve the user's own selection first — exact title (fast; Wikipedia
-    // redirects casing), then full-text search — and only then fall back to the
-    // curated name. Otherwise an alias like "supervised learning" would send
-    // "Self-Supervised Learning" to the Machine Learning article.
+    // Resolve the selection first (exact title, then search), and only then the
+    // curated name. Each stage skips disambiguation pages and prefers the CS sense.
     const differsFromLocal = Boolean(
       localName && localName.toLowerCase() !== selected.toLowerCase(),
     );
@@ -90,14 +89,21 @@ export class WikipediaProvider implements ExplanationProvider {
     }
   }
 
-  /** Try each candidate in order; return the first usable article summary. */
+  /**
+   * Try each candidate in order, expanding search candidates into ranked title
+   * lists, and return the first real article (skipping disambiguation pages).
+   */
   private async resolve(candidates: Candidate[], signal: AbortSignal): Promise<WikiSummary | null> {
     for (const candidate of candidates) {
-      const title =
-        candidate.kind === 'title' ? candidate.value : await this.search(candidate.value, signal);
-      if (!title) continue;
-      const summary = await this.fetchSummary(title, signal);
-      if (summary && summary.type !== 'disambiguation' && summary.extract) return summary;
+      const titles =
+        candidate.kind === 'title'
+          ? [candidate.value]
+          : (await this.search(candidate.value, signal)).slice(0, MAX_TITLES_PER_SEARCH);
+
+      for (const title of titles) {
+        const summary = await this.fetchSummary(title, signal);
+        if (summary && summary.type !== 'disambiguation' && summary.extract) return summary;
+      }
     }
     return null;
   }
@@ -105,56 +111,57 @@ export class WikipediaProvider implements ExplanationProvider {
   private async fetchSummary(title: string, signal: AbortSignal): Promise<WikiSummary | null> {
     const url = `${REST_SUMMARY}${encodeURIComponent(title.replace(/ /g, '_'))}?redirect=true`;
     const response = await fetch(url, { headers: { Accept: 'application/json' }, signal });
-    if (response.status === 404) return null;
-    if (!response.ok) {
-      throw new ExplanationError(`Wikipedia returned an error (HTTP ${response.status}). Try again.`);
-    }
-    return (await response.json()) as WikiSummary;
+    // Any non-OK status (missing page, malformed title, server hiccup) simply
+    // means "try the next candidate" rather than failing the whole lookup.
+    if (!response.ok) return null;
+    return (await response.json().catch(() => null)) as WikiSummary | null;
   }
 
-  private async search(query: string, signal: AbortSignal): Promise<string | null> {
+  private async search(query: string, signal: AbortSignal): Promise<string[]> {
     const params = new URLSearchParams({
       action: 'query',
       list: 'search',
       srsearch: query,
-      srlimit: '6',
+      srlimit: '8',
       srnamespace: '0',
       format: 'json',
       origin: '*',
     });
     const response = await fetch(`${ACTION_API}?${params.toString()}`, { signal });
-    if (!response.ok) return null;
-    const data = (await response.json()) as {
+    if (!response.ok) return [];
+    const data = (await response.json().catch(() => null)) as {
       query?: { search?: Array<{ title?: string }> };
-    };
-    const titles = (data.query?.search ?? [])
+    } | null;
+    const titles = (data?.query?.search ?? [])
       .map((hit) => hit.title)
       .filter((title): title is string => Boolean(title));
-    return this.chooseTitle(titles, query);
+    return this.rankTitles(titles, query);
   }
 
   /**
-   * Pick the best article from search hits: skip broad meta-pages (glossaries,
-   * lists, outlines) and prefer the title that most closely matches the query.
+   * Rank search hits for a computer-science reader: drop broad meta-pages,
+   * reward exact/prefix title matches, and boost the computer-science sense of
+   * ambiguous words (e.g. "Fine-tuning (deep learning)" over the physics one).
    */
-  private chooseTitle(titles: string[], query: string): string | null {
-    if (titles.length === 0) return null;
+  private rankTitles(titles: string[], query: string): string[] {
     const wanted = query.trim().toLowerCase();
     const isMeta = (title: string): boolean =>
       /^(glossary|list|index|outline|comparison|timeline|history|portal)\b/i.test(title);
+    const csQualifier =
+      /\((deep learning|machine learning|artificial intelligence|computer science|computing|programming|algorithm|data structure|software|cryptography|networking|mathematics)\)/i;
+    const base = (title: string): string => title.split(' (')[0]?.trim().toLowerCase() ?? '';
 
-    const specific = titles.filter((title) => !isMeta(title));
-    const pool = specific.length > 0 ? specific : titles;
-
-    const exact = pool.find((title) => title.toLowerCase() === wanted);
-    if (exact) return exact;
-
-    // A title whose base (before any "(qualifier)") matches the query.
-    const baseMatch = pool.find((title) => title.split(' (')[0]?.toLowerCase() === wanted);
-    if (baseMatch) return baseMatch;
-
-    const startsWith = pool.find((title) => title.toLowerCase().startsWith(wanted));
-    return startsWith ?? pool[0] ?? null;
+    return titles
+      .map((title, index) => {
+        let score = -index; // keep Wikipedia's own relevance order as a tiebreak
+        if (isMeta(title)) score -= 1000;
+        if (base(title) === wanted) score += 100;
+        else if (title.toLowerCase().startsWith(wanted)) score += 50;
+        if (csQualifier.test(title)) score += 40;
+        return { title, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.title);
   }
 
   /**
