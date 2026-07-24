@@ -1,5 +1,5 @@
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
-export type ExplanationMode = 'demo' | 'ai';
+export type ExplanationMode = 'demo' | 'live' | 'ai';
 export type Theme = 'light' | 'dark' | 'system';
 export type DetailLevel = 'concise' | 'detailed';
 
@@ -71,7 +71,7 @@ export interface UsageStats {
 
 export const DEFAULT_SETTINGS: Settings = {
   enabled: true,
-  mode: 'demo',
+  mode: 'live',
   apiKey: '',
   apiBaseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',

@@ -15,8 +15,10 @@ CS Concept Companion removes the tab-switch: select the term, click **Explain**,
 ## Key features
 
 - **Inline explanation card** — highlight text and a small _Explain_ button appears; clicking it opens a compact card with the concept name, a 2–3 sentence explanation, a code example, an everyday analogy, why the concept matters, related-concept chips, and a difficulty label.
-- **Demo Mode (default)** — a curated, hand-written dictionary of **52 core CS concepts** with aliases and context-aware matching. Fully offline; zero setup; nothing ever leaves your device.
-- **AI Mode (optional)** — plug in any OpenAI-compatible API (key, base URL, model) for open-ended explanations of anything, tuned to your chosen reading level.
+- **Three explanation sources**, switchable in Settings:
+  - **Live Mode (default)** — looks concepts up on **Wikipedia's free REST API**. No API key, covers essentially any CS term, and biases ambiguous words (e.g. _semaphore_) toward their computer-science sense. When a term is also in the curated set, the live definition is enriched with a hand-written example and analogy.
+  - **Demo Mode** — a curated, hand-written dictionary of **52 core CS concepts** with aliases and context-aware matching. Fully offline; nothing ever leaves your device.
+  - **AI Mode** — plug in any OpenAI-compatible API (key, base URL, model) for open-ended explanations tuned to your chosen reading level.
 - **Saved concept library** — save explanations, then search, review, copy, and revisit them from the popup, with source-page attribution.
 - **Recent history & usage stats** — see what you've looked up, plus a small learning-milestone progress bar.
 - **Keyboard shortcut** — `Ctrl/⌘ + Shift + E` explains the current selection.
@@ -48,6 +50,7 @@ To capture your own: load the extension (below), visit any article, highlight �
 │  • routes explain/save requests       │
 │  • per-tab request cancellation       │
 │  • ExplanationProvider interface      │
+│    ├─ WikipediaProvider (live REST)   │
 │    ├─ DemoProvider (local dictionary) │
 │    └─ AiProvider  (OpenAI-compatible) │
 │  • history + stats bookkeeping        │
@@ -99,6 +102,17 @@ npm run icons      # regenerate PNG icons from the SVG logo
 
 After rebuilding, click the refresh icon on the extension card in `chrome://extensions`.
 
+## How Live Mode works
+
+Live Mode is the default and needs no setup:
+
+1. The highlighted term is resolved to a lookup phrase (a curated-dictionary match supplies a canonical CS title when one exists).
+2. For terms not in the dictionary, the lookup is **biased toward computer science** — it searches Wikipedia for `"<term> computer science"` first, so _semaphore_ resolves to _Semaphore (programming)_ rather than flag signaling.
+3. It fetches the article via Wikipedia's REST summary endpoint (`/api/rest_v1/page/summary/…`), following redirects and skipping disambiguation pages, with a full-text search fallback.
+4. The first two sentences become the concise explanation; the full extract is shown on expand. If the term is also curated, the hand-written example, analogy, and "why it matters" are layered on top.
+
+Only the highlighted term is sent to Wikipedia — never the page. All requests go through the background service worker, which holds the narrow `https://*.wikipedia.org/*` host permission.
+
 ## How Demo Mode works
 
 Demo Mode is a fully offline explanation engine:
@@ -124,17 +138,19 @@ Calling an AI API directly from a browser extension means your API key is stored
 
 - **No analytics, no tracking, no data collection. Period.**
 - **Demo Mode:** nothing ever leaves your device.
+- **Live Mode:** only the term you highlight is sent to Wikipedia to fetch its article — never the surrounding page — and only when you ask for an explanation.
 - **AI Mode:** only when you explicitly request an explanation, the extension sends the selected text, up to ~600 characters of surrounding text, the nearest heading, and the page title — never the full page — to the API host _you_ configured.
 - Saved concepts, history, stats, and settings live in `chrome.storage.local` on your device.
 - The extension does not run on `chrome://` pages or the Web Store.
 
 ## Permissions explained
 
-| Permission                               | Why                                                                                                                                  |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `storage`                                | Save your settings, concept library, and history locally.                                                                            |
-| Content script on `http(s)://*/*`        | Required to detect selections and show the card on the pages you read. It runs no network requests and collects nothing.             |
-| `optional_host_permissions: https://*/*` | Requested **only** for the single API origin you configure in AI Mode, at the moment you configure it. Never requested in Demo Mode. |
+| Permission                                    | Why                                                                                                                                          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `storage`                                     | Save your settings, concept library, and history locally.                                                                                    |
+| `host_permissions: https://*.wikipedia.org/*` | Lets the background worker fetch article summaries in Live Mode. Narrowly scoped to Wikipedia.                                               |
+| Content script on `http(s)://*/*`             | Required to detect selections and show the card on the pages you read. It runs no network requests and collects nothing.                     |
+| `optional_host_permissions: https://*/*`      | Requested **only** for the single API origin you configure in AI Mode, at the moment you configure it. Never requested in Demo or Live Mode. |
 
 ## Testing
 
@@ -142,7 +158,7 @@ Calling an AI API directly from a browser extension means your API key is stored
 npm run test
 ```
 
-47 tests cover concept matching (exact, alias, plural, context, whole-word negative cases), AI response extraction/validation against malformed payloads, storage utilities with an in-memory Chrome mock, duplicate-save prevention, and selection sanitization.
+51 tests cover concept matching (exact, alias, plural, context, whole-word negative cases), AI response extraction/validation against malformed payloads, the live Wikipedia provider (summary mapping, CS-biased search fallback, curated enrichment, not-found errors), storage utilities with an in-memory Chrome mock, duplicate-save prevention, and selection sanitization.
 
 Manual verification was done on Wikipedia, MDN, GitHub, a blog article, documentation sites, a dark-themed page, and an SPA (the card and button are viewport-fixed and dismiss on significant scroll, navigation, `Escape`, or outside clicks).
 

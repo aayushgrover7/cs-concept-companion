@@ -33,7 +33,7 @@ describe('settings storage', () => {
     await saveSettings({ theme: 'dark' });
     const settings = await getSettings();
     expect(settings.theme).toBe('dark');
-    expect(settings.mode).toBe('demo');
+    expect(settings.mode).toBe('live');
   });
 
   it('resets to defaults', async () => {

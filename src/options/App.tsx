@@ -115,18 +115,26 @@ export function App() {
           <div className="field-text">
             <span className="field-label">Explanation source</span>
             <span className="field-desc">
-              Demo Mode works offline from a curated dictionary of 50+ CS concepts. AI Mode sends
-              your selection to an API you configure.
+              Live Mode looks concepts up on Wikipedia — no key needed, covers almost any term. Demo
+              Mode works fully offline from a curated dictionary. AI Mode uses your own API.
             </span>
           </div>
           <div className="mode-picker">
+            <button
+              className="mode-option"
+              aria-pressed={settings.mode === 'live'}
+              onClick={() => void update({ mode: 'live' })}
+            >
+              <strong>Live Mode</strong>
+              <span>Free Wikipedia lookups. No key. Works with almost any term.</span>
+            </button>
             <button
               className="mode-option"
               aria-pressed={settings.mode === 'demo'}
               onClick={() => void update({ mode: 'demo' })}
             >
               <strong>Demo Mode</strong>
-              <span>No API key needed. Nothing ever leaves your device.</span>
+              <span>Curated offline dictionary. Nothing ever leaves your device.</span>
             </button>
             <button
               className="mode-option"

@@ -76,9 +76,10 @@ export function App() {
           <div>
             <h2>It already works — no setup</h2>
             <p>
-              <strong>Demo Mode</strong> is on by default and explains 50+ core CS concepts entirely
-              offline. Want open-ended AI explanations for anything? Add your own OpenAI-compatible
-              API key under Settings → AI Mode.
+              <strong>Live Mode</strong> is on by default: it looks concepts up on Wikipedia, so it
+              works with almost any term and needs no API key. Prefer fully offline? Switch to{' '}
+              <strong>Demo Mode</strong> in Settings, or add your own key for{' '}
+              <strong>AI Mode</strong>.
             </p>
           </div>
         </div>
@@ -88,8 +89,9 @@ export function App() {
         <h2>Your privacy, plainly</h2>
         <p>
           No analytics, no tracking, no data collection. In Demo Mode nothing ever leaves your
-          device. In AI Mode, only the text you select (plus its surrounding sentence and the page
-          title) is sent — to the API host you chose, only when you ask for an explanation.
+          device. In Live Mode the term you highlight is sent to Wikipedia to fetch its article; in
+          AI Mode the selection (plus its surrounding sentence and the page title) goes to the API
+          host you chose — either way, only when you ask for an explanation.
         </p>
       </div>
 
