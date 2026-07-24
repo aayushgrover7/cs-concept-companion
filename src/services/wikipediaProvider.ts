@@ -38,33 +38,40 @@ export class WikipediaProvider implements ExplanationProvider {
   ): Promise<ConceptExplanation> {
     const context = [input.nearestHeading, input.surroundingText, input.pageTitle].join(' ');
     const local = matchConcept(input.selectedText, context);
-    const query = local?.entry.name ?? this.conciseQuery(input.selectedText);
-    if (!query) {
+    // The user's own selection drives the lookup — a dictionary alias must not
+    // hijack it (e.g. "Deep Learning" is an alias of Machine Learning, but has
+    // its own Wikipedia article). The curated name is only a fallback.
+    const selected = this.conciseQuery(input.selectedText);
+    const localName = local?.entry.name;
+    if (!selected && !localName) {
       throw new ExplanationError('Highlight a term to look up.', false);
     }
 
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
-    // Try the exact title first (fast, correct for well-formed terms like
-    // "Recursion"), then fall back to full-text search, which handles casing
-    // and redirects. A curated match supplies the canonical CS title.
-    const candidates: Candidate[] = [
-      { kind: 'title', value: local?.entry.name ?? query },
-      { kind: 'search', value: local?.entry.name ?? query },
-    ];
+    // Try the exact title first (fast; Wikipedia redirects casing), then search.
+    const differsFromLocal = Boolean(localName && localName.toLowerCase() !== selected.toLowerCase());
+    const candidates: Candidate[] = [{ kind: 'title', value: selected || localName! }];
+    if (differsFromLocal) candidates.push({ kind: 'title', value: localName! });
+    candidates.push({ kind: 'search', value: selected || localName! });
+    if (differsFromLocal) candidates.push({ kind: 'search', value: localName! });
 
     try {
       const summary = await this.resolve(candidates, combined);
 
       if (!summary || !summary.extract) {
         throw new ExplanationError(
-          `No Wikipedia article was found for “${truncate(query, 50)}”. Try highlighting a more specific term.`,
+          `No Wikipedia article was found for “${truncate(selected || localName!, 50)}”. Try highlighting a more specific term.`,
           false,
         );
       }
 
-      return this.build(summary, local?.entry);
+      // Only layer curated example/analogy on top when the resolved article
+      // actually matches the curated concept — never a loosely-related alias.
+      const enrich =
+        local && this.matchesLocalConcept(summary.title, local.entry) ? local.entry : undefined;
+      return this.build(summary, enrich);
     } catch (error) {
       if (error instanceof ExplanationError) throw error;
       if (signal?.aborted) throw new ExplanationError('Request cancelled.', false);
@@ -141,6 +148,16 @@ export class WikipediaProvider implements ExplanationProvider {
 
     const startsWith = pool.find((title) => title.toLowerCase().startsWith(wanted));
     return startsWith ?? pool[0] ?? null;
+  }
+
+  /**
+   * True only when the resolved Wikipedia article is the same concept as the
+   * curated entry (matched on the concept name, ignoring a trailing qualifier
+   * like "(computer science)"), so we never attach a related concept's example.
+   */
+  private matchesLocalConcept(title: string | undefined, entry: ConceptEntry): boolean {
+    const base = (title ?? '').split(' (')[0]?.trim().toLowerCase() ?? '';
+    return base.length > 0 && base === entry.name.toLowerCase();
   }
 
   private build(summary: WikiSummary, local?: ConceptEntry): ConceptExplanation {
