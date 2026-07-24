@@ -50,14 +50,21 @@ export class WikipediaProvider implements ExplanationProvider {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
-    // Try the exact title first (fast; Wikipedia redirects casing), then search.
+    // Resolve the user's own selection first — exact title (fast; Wikipedia
+    // redirects casing), then full-text search — and only then fall back to the
+    // curated name. Otherwise an alias like "supervised learning" would send
+    // "Self-Supervised Learning" to the Machine Learning article.
     const differsFromLocal = Boolean(
       localName && localName.toLowerCase() !== selected.toLowerCase(),
     );
-    const candidates: Candidate[] = [{ kind: 'title', value: selected || localName! }];
-    if (differsFromLocal) candidates.push({ kind: 'title', value: localName! });
-    candidates.push({ kind: 'search', value: selected || localName! });
-    if (differsFromLocal) candidates.push({ kind: 'search', value: localName! });
+    const primary = selected || localName!;
+    const candidates: Candidate[] = [
+      { kind: 'title', value: primary },
+      { kind: 'search', value: primary },
+    ];
+    if (differsFromLocal) {
+      candidates.push({ kind: 'title', value: localName! }, { kind: 'search', value: localName! });
+    }
 
     try {
       const summary = await this.resolve(candidates, combined);
